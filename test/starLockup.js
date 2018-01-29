@@ -1,26 +1,76 @@
-const StarbaseToken = artifacts.require('./StarbaseToken');
+const StandardToken = artifacts.require('./StandardToken');
 const StarLockup = artifacts.require('./StarLockup');
 
-/* The time lock is better to be flexible (variable set in the contract)
-Can be set for one 1 year lockup
- and 1/52 per week after 1 year.
+const { should, ensuresException, getBlockNow } = require('./helpers/utils');
 
-And have a cancel condition.
-If an allocatee quit the company(or some another issue) before certain date, allocator is able to cancel the allocation. */
+contract('StarLockup', ([allocator, beneficiary]) => {
+  let starLockup, token;
 
-contract('StarLockup', () => {
-    describe('contract migration parameters', () => {
-        it('has a lockupPeriod');
-        it('has a beneficiary');
-        it('has a allocator');
-        it('references StarbaseToken');
+  let startTokenReleaseAt, endTokenReleaseAt;
+
+  const dayInSecs = 86400;
+
+  beforeEach('setup contract', async () => {
+    startTokenReleaseAt = getBlockNow() + dayInSecs * 365;
+    endTokenReleaseAt = startTokenReleaseAt + dayInSecs * 365;
+
+    token = await StandardToken.new();
+
+    console.log({
+      startTokenReleaseAt,
+      endTokenReleaseAt,
+      beneficiary,
+      token: token.address
+    });
+    starLockup = await StarLockup.new(
+      startTokenReleaseAt,
+      endTokenReleaseAt,
+      beneficiary,
+      token.address
+    );
+  });
+
+  describe('contract migration parameters', () => {
+    it('has a startTokenReleaseAt', async () => {
+      const contractLockUpPeriod = await starLockup.startTokenReleaseAt();
+      contractLockUpPeriod.should.be.bignumber.equal(startTokenReleaseAt);
     });
 
-    it('cannot realease token before the lockupPeriod ends');
+    it('has a beneficiary');
+
+    it('has a allocator');
+    it('references StandardToken');
+  });
+
+  describe('claim tokens', () => {
+    describe('before lockup period', () => {
+      describe('as a beneficiary', () => {
+        it('is NOT able to claim tokens');
+      });
+
+      describe('as a allocator', () => {
+        it('is able to cancel contract');
+        it('is able to claim all vested tokens');
+      });
+    });
+
+    describe('after lock up period', () => {
+      describe('as a beneficiary', () => {
+        it('is able to claim unvested tokens');
+        it(
+          'should be able to claim their unvested tokens even if contract is cancelled'
+        );
+        it('cannot claim the same unvested tokens again');
+      });
+
+      describe('as a allocator', () => {
+        it('is able to cancel contract');
+        it('can only retrieve vested tokens past the point of cancellation');
+      });
+    });
+  });
+
+  describe('extra contract functionalities', () => {
     it('does not lock or accept ether');
-    it('releases token funds after lockupPeriod');
-    it(
-        'allows allocator to cancel the release of the tokens before the lockupPeriod is over'
-    );
-    it();
+  });
 });

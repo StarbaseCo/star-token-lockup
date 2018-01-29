@@ -1,76 +1,57 @@
 pragma solidity 0.4.18;
 
-import './StarbaseToken.sol';
-/* The time lock is better to be flexible (variable set in the contract)
-Can be set for one 1 year lockup and 1/52 per week after 1 year.
-
-And have a cancel condition.
-If an allocatee quit the company(or some another issue) before certain date, allocator is able to cancel the allocation. */
-
-/* it('cannot realease token before the unlockedAt ends');
-it('does not lock or accept ether');
-it('releases token funds after unlockedAt');
-it(
-    'allows allocator to cancel the release of the tokens before the unlockedAt is over'
-); */
+import 'zeppelin-solidity/contracts/token/ERC20/StandardToken.sol';
 
 contract StarLockup {
-    uint256 public unlockedAt;
-    uint256 public gradualReleasePeriod;
+    uint256 public startTokenReleaseAt;
+    uint256 public endTokenReleaseAt;
     address public beneficiary;
     address public allocator;
-    uint256 public lastTokenRelease;
+    uint256 public lastTokensClaimedAt;
 
-    StarbaseToken public star;
+    StandardToken public star;
 
+    /**
+     * @dev contract constructor
+     * @param _startTokenReleaseAt Beneficiary can start claiming tokens partially
+     * @param _endTokenReleaseAt Beneficiary is able to claim all tokens
+     * @param _beneficiary Beneficiary address
+     * @param tokenAddress ERC20 token address
+     */
     function StarLockup
     (
-        uint256 _unlockedAt,
-        uint256 _gradualReleasePeriod,
+        uint256 _startTokenReleaseAt,
+        uint256 _endTokenReleaseAt,
         address _beneficiary,
-        address token
+        address tokenAddress
     )
         public
     {
         require(
-            beneficiary != address(0) &&
-            token != address(0) &&
-            unlockedAt > now &&
-            _gradualReleasePeriod != 0
+            _startTokenReleaseAt >= now &&
+            _endTokenReleaseAt > _startTokenReleaseAt &&
+            _beneficiary != address(0) &&
+            tokenAddress != address(0)
         );
 
-        unlockedAt = _unlockedAt;
-        gradualReleasePeriod = _gradualReleasePeriod;
+        startTokenReleaseAt = _startTokenReleaseAt;
+        endTokenReleaseAt = _endTokenReleaseAt;
         beneficiary = _beneficiary;
         allocator = msg.sender;
 
-        star = StarbaseToken(token);
-    }
-
-    function cancelContract() public {
-        require(msg.sender == allocator);
-
-        uint256 starBalance = star.balanceOf(this);
-        releaseTokens(allocator, starBalance);
-
-        selfdestruct();
+        star = StandardToken(tokenAddress);
     }
 
     function claimTokens() public {
-        require(msg.sender == beneficiary && now >= unlockedAt);
+        require(msg.sender == beneficiary && now >= startTokenReleaseAt);
 
-        if (now > unlockedAt) {
-            if (!lastTokenRelease)
-                lastTokenRelease = now;
+        uint256 tokenAmount = star.balanceOf(this);
+        uint256 numberOfSecondsElapsed = lastTokensClaimedAt - startTokenReleaseAt;
+        uint256 claimableStarBalance = numberOfSecondsElapsed * (tokenAmount / endTokenReleaseAt);
 
-            uint256 tokenAmount = star.balanceOf(this);
-            uint256 numberOfSecondsElapsed = lastTokenRelease - unlockedAt; // seconds passed after lastTokenRelease
-            uint256 claimableStarBalance = numberOfSecondsElapsed * (tokenAmount / gradualReleasePeriod)
+        lastTokensClaimedAt = now;
 
-            return releaseTokens(beneficiary, claimableStarBalance);
-        }
-
-        releaseTokens(beneficiary);
+        return releaseTokens(beneficiary, claimableStarBalance);
     }
 
     function releaseTokens(address receiver, uint256 amount) internal {
