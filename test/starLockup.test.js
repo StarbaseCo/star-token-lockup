@@ -8,95 +8,127 @@ const BigNumber = web3.BigNumber;
 
 contract('StarLockup', function([_, owner, beneficiary]) {
     const amount = new BigNumber(1000);
+    let start, token, cliff, length;
+    let vesting;
 
-    beforeEach(async function() {
-        this.token = await MintableToken.new({ from: owner });
+    beforeEach(async () => {
+        token = await MintableToken.new({ from: owner });
 
-        this.start = latestTime() + duration.minutes(1); // +1 minute so it starts after contract instantiation
-        this.cliff = duration.years(1);
-        this.duration = duration.years(2);
+        start = latestTime() + duration.minutes(1); // +1 minute so it starts after contract instantiation
+        cliff = duration.years(1);
+        length = duration.years(2);
 
-        this.vesting = await StarLockup.new(
+        vesting = await StarLockup.new(
             beneficiary,
-            this.start,
-            this.cliff,
-            this.duration,
+            start,
+            cliff,
+            length,
             true,
-            this.token.address,
+            token.address,
             { from: owner }
         );
 
-        await this.token.mint(this.vesting.address, amount, { from: owner });
+        await token.mint(vesting.address, amount, { from: owner });
     });
 
-    it('cannot be released before cliff', async function() {
+    it('cannot be released before cliff', async () => {
         try {
-            await this.vesting.release();
+            await vesting.release();
             assert.fail();
         } catch (e) {
             ensuresException(e);
         }
     });
 
-    it('can be released after cliff', async function() {
-        await increaseTimeTo(this.start + this.cliff + duration.weeks(1));
-        await this.vesting.release().should.be.fulfilled;
+    it('can be released after cliff', async () => {
+        await increaseTimeTo(start + cliff + duration.weeks(1));
+        await vesting.release().should.be.fulfilled;
     });
 
-    it('should release proper amount after cliff', async function() {
-        await increaseTimeTo(this.start + this.cliff);
+    it('should release proper amount after cliff', async () => {
+        await increaseTimeTo(start + cliff);
 
-        const { receipt } = await this.vesting.release();
+        const { receipt } = await vesting.release();
         const releaseTime = web3.eth.getBlock(receipt.blockNumber).timestamp;
 
-        const balance = await this.token.balanceOf(beneficiary);
+        const balance = await token.balanceOf(beneficiary);
         balance.should.bignumber.equal(
             amount
-                .mul(releaseTime - this.start)
-                .div(this.duration)
+                .mul(releaseTime - start)
+                .div(length)
                 .floor()
         );
     });
 
-    it('should linearly release tokens during vesting period', async function() {
-        const vestingPeriod = this.duration - this.cliff;
+    it('cannot release token twice for the same time period', async () => {
+        await increaseTimeTo(start + cliff);
+
+        const { receipt } = await vesting.release();
+        const releaseTime = web3.eth.getBlock(receipt.blockNumber).timestamp;
+
+        let balance = await token.balanceOf(beneficiary);
+        balance.should.bignumber.equal(
+            amount
+                .mul(releaseTime - start)
+                .div(length)
+                .floor()
+        );
+
+        // attempt another claim right after first one. All in all token balance must be the same
+        try {
+            await vesting.release();
+            assert.fail();
+        } catch (e) {
+            ensuresException(e);
+        }
+
+        balance = await token.balanceOf(beneficiary);
+        balance.should.bignumber.equal(
+            amount
+                .mul(releaseTime - start)
+                .div(length)
+                .floor()
+        );
+    });
+
+    it('should linearly release tokens during vesting period', async () => {
+        const vestingPeriod = length - cliff;
         const checkpoints = 4;
 
         for (let i = 1; i <= checkpoints; i++) {
-            const now =
-                this.start + this.cliff + i * (vestingPeriod / checkpoints);
+            const now = start + cliff + i * (vestingPeriod / checkpoints);
             await increaseTimeTo(now);
 
-            await this.vesting.release();
-            const balance = await this.token.balanceOf(beneficiary);
+            await vesting.release();
+            const balance = await token.balanceOf(beneficiary);
             const expectedVesting = amount
-                .mul(now - this.start)
-                .div(this.duration)
+                .mul(now - start)
+                .div(length)
                 .floor();
 
             balance.should.bignumber.equal(expectedVesting);
         }
     });
 
-    it('should have released all after end', async function() {
-        await increaseTimeTo(this.start + this.duration);
-        await this.vesting.release();
-        const balance = await this.token.balanceOf(beneficiary);
+    it('should have released all after end', async () => {
+        await increaseTimeTo(start + length);
+        await vesting.release();
+        const balance = await token.balanceOf(beneficiary);
         balance.should.bignumber.equal(amount);
     });
 
-    it('should be revoked by owner if revocable is set', async function() {
-        await this.vesting.revoke({ from: owner }).should.be.fulfilled;
+    it('should be revoked by owner if revocable is set', async () => {
+        await vesting.revoke({ from: owner }).should.be.fulfilled;
     });
 
-    it('should fail to be revoked by owner if revocable not set', async function() {
+    it('should fail to be revoked by owner if revocable not set', async () => {
         const vesting = await StarLockup.new(
             beneficiary,
-            this.start,
-            this.cliff,
-            this.duration,
+            start,
+            cliff,
+            length,
             false,
-            this.token.address,
+            token.address,
             { from: owner }
         );
 
@@ -108,38 +140,38 @@ contract('StarLockup', function([_, owner, beneficiary]) {
         }
     });
 
-    it('should return the non-vested tokens when revoked by owner', async function() {
-        await increaseTimeTo(this.start + this.cliff + duration.weeks(12));
+    it('should return the non-vested tokens when revoked by owner', async () => {
+        await increaseTimeTo(start + cliff + duration.weeks(12));
 
-        const vested = await this.vesting.vestedAmount();
+        const vested = await vesting.vestedAmount();
 
-        await this.vesting.revoke({ from: owner });
+        await vesting.revoke({ from: owner });
 
-        const ownerBalance = await this.token.balanceOf(owner);
+        const ownerBalance = await token.balanceOf(owner);
         ownerBalance.should.bignumber.equal(amount.sub(vested));
     });
 
-    it('should keep the vested tokens when revoked by owner', async function() {
-        await increaseTimeTo(this.start + this.cliff + duration.weeks(12));
+    it('should keep the vested tokens when revoked by owner', async () => {
+        await increaseTimeTo(start + cliff + duration.weeks(12));
 
-        const vestedPre = await this.vesting.vestedAmount();
+        const vestedPre = await vesting.vestedAmount();
 
-        await this.vesting.revoke({ from: owner });
+        await vesting.revoke({ from: owner });
 
-        const vestedPost = await this.vesting.vestedAmount();
+        const vestedPost = await vesting.vestedAmount();
 
         vestedPre.should.bignumber.equal(vestedPost);
     });
 
-    it('should fail to be revoked a second time', async function() {
-        await increaseTimeTo(this.start + this.cliff + duration.weeks(12));
+    it('should fail to be revoked a second time', async () => {
+        await increaseTimeTo(start + cliff + duration.weeks(12));
 
-        await this.vesting.vestedAmount();
+        await vesting.vestedAmount();
 
-        await this.vesting.revoke({ from: owner });
+        await vesting.revoke({ from: owner });
 
         try {
-            await this.vesting.revoke({ from: owner });
+            await vesting.revoke({ from: owner });
             assert.fail();
         } catch (e) {
             ensuresException(e);
